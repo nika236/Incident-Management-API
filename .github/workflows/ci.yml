@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore IncidentManagement.sln
+
+      - name: Build
+        run: dotnet build IncidentManagement.sln --configuration Release --no-restore
+
+      - name: Test
+        env:
+          USE_TESTCONTAINERS: "true"
+        run: dotnet test IncidentManagement.sln --configuration Release --no-build --verbosity normal
+
+      - name: Build Docker image
+        run: docker build -t incident-management-api:ci .
+
+  docker-push:
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t incident-management-api:latest .
+
+      - name: Push image (optional)
+        env:
+          REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+          REGISTRY_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          if [ -z "$REGISTRY" ] || [ -z "$REGISTRY_USERNAME" ] || [ -z "$REGISTRY_PASSWORD" ]; then
+            echo "Docker registry secrets not configured; skipping push."
+            exit 0
+          fi
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY" -u "$REGISTRY_USERNAME" --password-stdin
+          docker tag incident-management-api:latest "$REGISTRY/incident-management-api:latest"
+          docker push "$REGISTRY/incident-management-api:latest"
